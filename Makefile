@@ -29,4 +29,4 @@ $(moddir): $(BUILD)
 
 
 run:
-	cafrun -n 1 $(app)
+	cafrun -n 3 $(app)
