@@ -30,8 +30,6 @@ contains
        read(*,'(a)') filename
        write(*,'(a)') trim(filename)
     
-       
-       !filename = 'input/parameters.nml'
        open(newunit = parameters_unit, file = trim(filename))
        read(parameters_unit, nml = params)
        close(parameters_unit)

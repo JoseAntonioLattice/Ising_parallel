@@ -75,8 +75,8 @@ program main
         end do
         
         ! Take measurements
-        E(isweeps) = energy_density(spin(1:ile,:))
-        M(isweeps) = 1.0_dp*abs(sum(spin(1:ile,:)))/L**2
+        E(isweeps) = energy_density(spin(:,:))
+        M(isweeps) = 1.0_dp*abs(sum(spin(:,:)))/L**2
         sync all
         call co_sum(E(isweeps),result_image = 1)
         call co_sum(M(isweeps),result_image = 1)
@@ -176,14 +176,14 @@ contains
   end function DE
 
   function energy_density(spin)
-    integer, intent(in) :: spin(:,:)[*]
+    integer, intent(in) :: spin(0:,:)
     real(dp) :: energy_density
     integer :: E, i, j
 
     E = 0
     do i = 1, ile
        do j = 1, L
-          E = E + spin(i,j) * (spin(ip(i),j) + spin(i,ip(j)))
+          E = E + spin(i,j) * (spin(i+1,j) + spin(i,ip(j)))
        end do
     end do
     energy_density = -real(E,dp)/L**2
