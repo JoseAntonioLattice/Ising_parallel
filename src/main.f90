@@ -5,7 +5,6 @@ program main
   use mod_parallel
   implicit none
 
-  
   ! Iterators
   integer :: i,j, isweeps,iskip, it
 
@@ -14,14 +13,13 @@ program main
   
   ! Arrays
   integer, allocatable  :: ip(:), im(:)
-  real(dp), allocatable :: E(:), M(:)
+  real(dp), allocatable, codimension[:] :: E(:), M(:)
   real(dp), allocatable :: T(:), beta(:)
 
   !Parallel variables
   ! Coarrays
   integer, allocatable :: spin(:,:)[:]
-  integer, allocatable :: spin_local(:,:)[:]
-
+  
   integer :: is, ie, indices(2), tile_size
   integer :: ils, ile, ims, ime, in(2), left, right
   
@@ -29,7 +27,7 @@ program main
   call read_input()
 
   allocate(ip(L),im(L))
-  allocate(E(N_measurements),M(N_measurements))
+  allocate(E(N_measurements)[*],M(N_measurements)[*])
   allocate(T(Nt),beta(Nt))
   
   ! Periodic Boundary conditions
@@ -56,34 +54,32 @@ program main
   ile = tile_size
   ims = ils - 1
   ime = ile + 1
-  !print*, is, ie, left, right
-  allocate(spin(L,L)[*])
-  allocate(spin_local(ims:ime,L)[*])
+
+  allocate(spin(ims:ime,L)[*])
 
   ! Cold Start
-  spin_local = 1
+  spin = 1
   sync all
   
   ! Simulation loop
   temperature : do it = 1, Nt
      ! Thermalization
      do isweeps = 1, N_thermalization
-        call checkerboard_sweeps(spin_local,beta(it))
+        call checkerboard_sweeps(spin,beta(it))
      end do
 
      ! Measurements loop
      do isweeps = 1, N_measurements
         do iskip = 1, Nskip
-           call checkerboard_sweeps(spin_local,beta(it))
+           call checkerboard_sweeps(spin,beta(it))
         end do
         
         ! Take measurements
-        spin(is:ie,:)[1] = spin_local(ils:ile,:)
+        E(isweeps) = energy_density(spin(1:ile,:))
+        M(isweeps) = 1.0_dp*abs(sum(spin(1:ile,:)))/L**2
         sync all
-        if(this_image() == 1)then
-           E(isweeps) = energy_density(spin(:,:))
-           M(isweeps) = 1.0_dp*abs(sum(spin(:,:)))/L**2
-        end if
+        call co_sum(E(isweeps),result_image = 1)
+        call co_sum(M(isweeps),result_image = 1)
      end do
      
      ! Print measurements
@@ -121,86 +117,71 @@ contains
 
   end function stderr
   
-  subroutine sweeps(spin,beta)
-    integer, intent(inout) :: spin(:,:)
+  subroutine checkerboard_sweeps(spin,beta)
+    integer, intent(inout) :: spin(0:,:)[*]
     real(dp), intent(in) ::  beta
     integer :: i, j
-
-    do i = 1, L
-       do j = 1, L
-          !call metropolis(spin,[i,j],beta)
-       end do
-    end do
-  end subroutine sweeps
-
-  subroutine checkerboard_sweeps(spinlocal,beta)
-    integer, intent(inout) :: spinlocal(0:,:)[*]
-    real(dp), intent(in) ::  beta
-    integer :: i, j
-
 
     ! Update white squares
     do i = 1, ile
        do j = 1, L
-          if(mod(i+j,2) == 0) call metropolis(spinlocal,[i,j],beta)
+          if(mod(i+j,2) == 0) call metropolis(spin,[i,j],beta)
        end do
     end do
-    spinlocal(ime,:)[left]  = spinlocal(ils,:)
-    spinlocal(ims,:)[right] = spinlocal(ile,:)
+    spin(ime,:)[left]  = spin(ils,:)
+    spin(ims,:)[right] = spin(ile,:)
     sync all
 
     ! Update black squares
     do i = 1, ile
        do j = 1, L
-          if(mod(i+j,2) /= 0) call metropolis(spinlocal,[i,j],beta)
+          if(mod(i+j,2) /= 0) call metropolis(spin,[i,j],beta)
        end do
     end do
-    spinlocal(ime,:)[left]  = spinlocal(ils,:)
-    spinlocal(ims,:)[right] = spinlocal(ile,:)
+    spin(ime,:)[left]  = spin(ils,:)
+    spin(ims,:)[right] = spin(ile,:)
     sync all
-
-
     
   end subroutine checkerboard_sweeps
   
 
-  subroutine metropolis(spinlocal,x,beta)
-    integer, intent(inout) :: spinlocal(0:,:)
+  subroutine metropolis(spin,x,beta)
+    integer, intent(inout) :: spin(0:,:)
     real(dp), intent(in) :: beta
     integer, intent(in) :: x(2)
     integer :: DH
     real(dp) :: r
 
-    DH = DE(spinlocal,x)
+    DH = DE(spin,x)
 
     if( DH <= 0 )then
-       spinlocal(x(1),x(2)) = -spinlocal(x(1),x(2))
+       spin(x(1),x(2)) = -spin(x(1),x(2))
     else
        call random_number(r)
-       if( r <= exp(-DH*beta)) spinlocal(x(1),x(2)) = -spinlocal(x(1),x(2))
+       if( r <= exp(-DH*beta)) spin(x(1),x(2)) = -spin(x(1),x(2))
     end if
     
   end subroutine metropolis
 
-  function DE(spinlocal,x)
-    integer, intent(in) :: spinlocal(0:,:)
+  function DE(spin,x)
+    integer, intent(in) :: spin(0:,:)
     integer, intent(in) :: x(2)
     integer :: DE, i,j
 
     i = x(1)
     j = x(2)
 
-    DE = 2*spinlocal(i,j)*(spinlocal(i+1,j) + spinlocal(i,ip(j)) + spinlocal(i-1,j) + spinlocal(i,im(j)))
+    DE = 2*spin(i,j)*(spin(i+1,j) + spin(i,ip(j)) + spin(i-1,j) + spin(i,im(j)))
     
   end function DE
 
   function energy_density(spin)
-    integer, intent(in) :: spin(L,L)
+    integer, intent(in) :: spin(:,:)[*]
     real(dp) :: energy_density
     integer :: E, i, j
 
     E = 0
-    do i = 1, L
+    do i = 1, ile
        do j = 1, L
           E = E + spin(i,j) * (spin(ip(i),j) + spin(i,ip(j)))
        end do
