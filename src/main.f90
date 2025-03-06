@@ -1,29 +1,36 @@
 program main
 
   use iso_fortran_env, only: dp => real64
+  use parameters
   use mod_parallel
   implicit none
 
-  ! Parameters
-  integer, parameter :: L = 12, Nm = 10**3, Nterm = 500, Nt = 10, Nskip = 10
-  real(dp), parameter :: Tmin = 0.1_dp, Tmax = 4.0_dp, DT = Tmax - Tmin
   
   ! Iterators
-  integer :: i, isweeps,iskip, it
+  integer :: i,j, isweeps,iskip, it
 
+  ! Other integers
+  integer :: ounit
+  
   ! Arrays
-  integer  :: ip(L), im(L)
-  real(dp) :: E(Nm), M(Nm)
-  real(dp) :: T(Nt), beta(Nt)
+  integer, allocatable  :: ip(:), im(:)
+  real(dp), allocatable :: E(:), M(:)
+  real(dp), allocatable :: T(:), beta(:)
 
   !Parallel variables
   ! Coarrays
-  integer :: spin(L,L)[*]
+  integer, allocatable :: spin(:,:)[:]
   integer, allocatable :: spin_local(:,:)[:]
 
   integer :: is, ie, indices(2), tile_size
   integer :: ils, ile, ims, ime, in(2), left, right
   
+
+  call read_input()
+
+  allocate(ip(L),im(L))
+  allocate(E(N_measurements),M(N_measurements))
+  allocate(T(Nt),beta(Nt))
   
   ! Periodic Boundary conditions
   ip = [(i+1, i = 1, L)] ; ip(L) = 1
@@ -34,7 +41,7 @@ program main
   beta = 1/T
 
   ! Open file 
-  if(this_image() == 1) open(unit = 10, file = "datosP.dat")
+  if(this_image() == 1) open(newunit = ounit, file = "datosP.dat")
 
   ! Parallel
   indices = tile_indices(L)
@@ -49,7 +56,8 @@ program main
   ile = tile_size
   ims = ils - 1
   ime = ile + 1
-  print*, is, ie, left, right
+  !print*, is, ie, left, right
+  allocate(spin(L,L)[*])
   allocate(spin_local(ims:ime,L)[*])
 
   ! Cold Start
@@ -59,28 +67,33 @@ program main
   ! Simulation loop
   temperature : do it = 1, Nt
      ! Thermalization
-     do isweeps = 1, Nterm
+     do isweeps = 1, N_thermalization
         call checkerboard_sweeps(spin_local,beta(it))
      end do
 
      ! Measurements loop
-     do isweeps = 1, Nm
-        
+     do isweeps = 1, N_measurements
         do iskip = 1, Nskip
            call checkerboard_sweeps(spin_local,beta(it))
         end do
         
-        ! Take measurments
-        spin(is:ie,:)[1] = spin_local(1:tile_size,:)
+        ! Take measurements
+        spin(is:ie,:)[1] = spin_local(ils:ile,:)
         sync all
         if(this_image() == 1)then
            E(isweeps) = energy_density(spin(:,:))
            M(isweeps) = 1.0_dp*abs(sum(spin(:,:)))/L**2
         end if
      end do
+     
      ! Print measurements
-     if(this_image() == 1) write(10,*) T(it), avr(E), avr(M)
-     !sync all
+     if(this_image() == 1) then
+        write(ounit,*) T(it), avr(E), stderr(E), avr(M), stderr(M)
+        flush(ounit)
+     end if
+     
+     sync all
+     
   end do temperature
 contains
 
@@ -90,7 +103,24 @@ contains
 
     avr = sum(x)/size(x)
   end function avr
+  
+  function var(x)
+    real(dp), intent(in) :: x(:)
+    real(dp) :: var, avg
 
+    avg = avr(x)
+    var = sum((x-avg)**2)/(size(x) - 1)
+
+  end function var
+
+  function stderr(x)
+    real(dp), intent(in) :: x(:)
+    real(dp) :: stderr
+
+    stderr = sqrt(var(x)/size(x))
+
+  end function stderr
+  
   subroutine sweeps(spin,beta)
     integer, intent(inout) :: spin(:,:)
     real(dp), intent(in) ::  beta
@@ -104,38 +134,38 @@ contains
   end subroutine sweeps
 
   subroutine checkerboard_sweeps(spinlocal,beta)
-    integer, intent(inout) :: spinlocal(ims:ime,L)[*]
+    integer, intent(inout) :: spinlocal(0:,:)[*]
     real(dp), intent(in) ::  beta
     integer :: i, j
 
-    spinlocal(tile_size+1,:)[left]  = spinlocal(1,:)
-    spinlocal(0,:)[right] = spinlocal(tile_size,:)
-    sync all
 
     ! Update white squares
-    do i = 1, tile_size
+    do i = 1, ile
        do j = 1, L
           if(mod(i+j,2) == 0) call metropolis(spinlocal,[i,j],beta)
        end do
     end do
-    sync all
-    spinlocal(tile_size+1,:)[left]  = spinlocal(1,:)
-    spinlocal(0,:)[right] = spinlocal(tile_size,:)
+    spinlocal(ime,:)[left]  = spinlocal(ils,:)
+    spinlocal(ims,:)[right] = spinlocal(ile,:)
     sync all
 
     ! Update black squares
-    do i = 1, tile_size
+    do i = 1, ile
        do j = 1, L
           if(mod(i+j,2) /= 0) call metropolis(spinlocal,[i,j],beta)
        end do
     end do
+    spinlocal(ime,:)[left]  = spinlocal(ils,:)
+    spinlocal(ims,:)[right] = spinlocal(ile,:)
     sync all
+
+
     
   end subroutine checkerboard_sweeps
   
 
   subroutine metropolis(spinlocal,x,beta)
-    integer, intent(inout) :: spinlocal(0:tile_size+1,L)
+    integer, intent(inout) :: spinlocal(0:,:)
     real(dp), intent(in) :: beta
     integer, intent(in) :: x(2)
     integer :: DH
@@ -147,20 +177,20 @@ contains
        spinlocal(x(1),x(2)) = -spinlocal(x(1),x(2))
     else
        call random_number(r)
-       if( r <= exp(-DH*beta)) spin(x(1),x(2)) = -spin(x(1),x(2))
+       if( r <= exp(-DH*beta)) spinlocal(x(1),x(2)) = -spinlocal(x(1),x(2))
     end if
     
   end subroutine metropolis
 
   function DE(spinlocal,x)
-    integer, intent(in) :: spinlocal(0:tile_size+1,L)
+    integer, intent(in) :: spinlocal(0:,:)
     integer, intent(in) :: x(2)
     integer :: DE, i,j
 
     i = x(1)
     j = x(2)
 
-    DE = 2*spin(i,j)*(spin(i+1,j) + spin(i,ip(j))+spin(i-1,j) + spin(i,im(j)))
+    DE = 2*spinlocal(i,j)*(spinlocal(i+1,j) + spinlocal(i,ip(j)) + spinlocal(i-1,j) + spinlocal(i,im(j)))
     
   end function DE
 
