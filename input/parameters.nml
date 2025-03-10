@@ -1,5 +1,5 @@
 &params
-L = 60
+L = 64
 N_measurements = 1000
 N_thermalization = 500
 Nt = 10

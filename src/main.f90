@@ -6,19 +6,21 @@ program main
   implicit none
 
   ! Iterators
-  integer :: i,j, isweeps,iskip, it
+  integer :: i,j,k,k2,isweeps,iskip,it
 
   ! Other integers
-  integer :: ounit
+  integer :: ounit, Nw
   
   ! Arrays
   integer, allocatable  :: ip(:), im(:)
-  real(dp), allocatable, codimension[:] :: E(:), M(:)
+  integer, allocatable  :: black(:,:), white(:,:)  
   real(dp), allocatable :: T(:), beta(:)
 
   !Parallel variables
+
   ! Coarrays
   integer, allocatable :: spin(:,:)[:]
+  real(dp), allocatable, codimension[:] :: E(:), M(:)
   
   integer :: is, ie, indices(2), tile_size
   integer :: ils, ile, ims, ime, in(2), left, right
@@ -26,14 +28,18 @@ program main
 
   call read_input()
 
+  call random_init(.false.,.true.)
+
+  ! Allocate variables
   allocate(ip(L),im(L))
   allocate(E(N_measurements)[*],M(N_measurements)[*])
   allocate(T(Nt),beta(Nt))
   
+  
   ! Periodic Boundary conditions
   ip = [(i+1, i = 1, L)] ; ip(L) = 1
   im = [(i-1, i = 1, L)] ; im(1) = L
-
+    
   ! Temperature array
   T = [(Tmin + DT*i/(Nt - 1), i = 0, Nt-1)]
   beta = 1/T
@@ -56,7 +62,25 @@ program main
   ime = ile + 1
 
   allocate(spin(ims:ime,L)[*])
-
+  ! Number of white squares
+  Nw = ile*L/2
+  allocate(white(Nw,2),black(Nw,2))
+  
+  ! Black and white coordinates
+  k = 0; k2 = 0
+  do i = 1, ile
+     do j = 1, L
+        if( mod(i+j,2) == 0) then
+           k = k + 1
+           white(k,:) = [i,j]
+        else
+           k2 = k2 + 1
+           black(k2,:) = [i,j]
+        end if
+     end do
+  end do
+  !if (this_image() == 1) print*, Nw, k, k2
+  
   ! Cold Start
   spin = 1
   sync all
@@ -76,7 +100,7 @@ program main
         
         ! Take measurements
         E(isweeps) = energy_density(spin(:,:))
-        M(isweeps) = 1.0_dp*abs(sum(spin(:,:)))/L**2
+        M(isweeps) = real(sum(spin(1:tile_size,1:L)),dp)
         sync all
         call co_sum(E(isweeps),result_image = 1)
         call co_sum(M(isweeps),result_image = 1)
@@ -84,9 +108,13 @@ program main
      
      ! Print measurements
      if(this_image() == 1) then
+        M = abs(M/L**2)
+        
         write(ounit,*) T(it), avr(E), stderr(E), avr(M), stderr(M)
         flush(ounit)
      end if
+     E = 0
+     M = 0 
      
      sync all
      
@@ -120,23 +148,19 @@ contains
   subroutine checkerboard_sweeps(spin,beta)
     integer, intent(inout) :: spin(0:,:)[*]
     real(dp), intent(in) ::  beta
-    integer :: i, j
+    integer :: i
 
     ! Update white squares
-    do i = 1, ile
-       do j = 1, L
-          if(mod(i+j,2) == 0) call metropolis(spin,[i,j],beta)
-       end do
+    do i = 1, Nw
+       call metropolis(spin,[white(i,1),white(i,2)],beta)
     end do
     spin(ime,:)[left]  = spin(ils,:)
     spin(ims,:)[right] = spin(ile,:)
     sync all
-
+    
     ! Update black squares
-    do i = 1, ile
-       do j = 1, L
-          if(mod(i+j,2) /= 0) call metropolis(spin,[i,j],beta)
-       end do
+    do i = 1, Nw
+       call metropolis(spin,[black(i,1),black(i,2)],beta)
     end do
     spin(ime,:)[left]  = spin(ils,:)
     spin(ims,:)[right] = spin(ile,:)
@@ -163,7 +187,7 @@ contains
     
   end subroutine metropolis
 
-  function DE(spin,x)
+  pure function DE(spin,x)
     integer, intent(in) :: spin(0:,:)
     integer, intent(in) :: x(2)
     integer :: DE, i,j
@@ -175,7 +199,7 @@ contains
     
   end function DE
 
-  function energy_density(spin)
+  pure function energy_density(spin)
     integer, intent(in) :: spin(0:,:)
     real(dp) :: energy_density
     integer :: E, i, j

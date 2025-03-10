@@ -36,4 +36,4 @@ clean :
 	rm -r $(BUILD)/*
 
 run:
-	echo input/parameters.nml | cafrun -n 3 $(app)
+	echo input/parameters.nml | cafrun -n 4 $(app)
