@@ -1,8 +1,6 @@
 &params
-d(1) = 2
-d(2) = 2
-L(1) = 1024
-L(2) = 1024
+d = 2, 2
+L = 64, 64
 N_measurements = 1000
 N_thermalization = 500
 Nt = 10
