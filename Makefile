@@ -1,5 +1,5 @@
 
-FC = caf
+FC = gfortran -fcoarray=lib -O3
 BUILD = build
 moddir = $(BUILD)/mod
 objdir = $(BUILD)/obj
@@ -10,7 +10,7 @@ mainfile = main.f90
 objfiles = $(patsusbt %,$(objdir)/%.o,$(srcfiles))
 
 $(app): build/obj/mod_parallel.o build/obj/parameters.o build/obj/main.o
-	$(FC) $^ -o $@
+	gfortran $^ -o $@ -lcaf_mpi 
 
 $(objdir)/mod_parallel.o: $(srcdir)/mod_parallel.f90 $(objdir) $(moddir)
 	$(FC) -c -J $(moddir) $< -o $@
@@ -36,4 +36,4 @@ clean :
 	rm -r $(BUILD)/*
 
 run:
-	echo input/parameters.nml | cafrun -n 4 $(app)
+	echo input/parameters.nml | LD_LIBRARY_PATH=/home/jose/OpenCoarrays/build/lib cafrun -n 4 $(app)

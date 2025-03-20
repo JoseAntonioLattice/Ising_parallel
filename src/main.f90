@@ -12,7 +12,7 @@ program main
   integer :: ounit, Nw
   
   ! Arrays
-  integer, allocatable  :: ip(:), im(:)
+  integer, allocatable  :: ip1(:), im1(:), ip2(:), im2(:), p(:,:)
   integer, allocatable  :: black(:,:), white(:,:)  
   real(dp), allocatable :: T(:), beta(:)
 
@@ -22,8 +22,8 @@ program main
   integer, allocatable :: spin(:,:)[:]
   real(dp), allocatable, codimension[:] :: E(:), M(:)
   
-  integer :: is, ie, indices(2), tile_size
-  integer :: ils, ile, ims, ime, in(2), left, right
+  integer :: is, ie, indices(2), tile_sizex, tile_sizey
+  integer :: ils, ile, ims, ime, in(2), left, right, up, down, col, row
   
 
   call read_input()
@@ -31,45 +31,65 @@ program main
   call random_init(.false.,.true.)
 
   ! Allocate variables
-  allocate(ip(L),im(L))
+  allocate(ip1(d(1)),im1(d(1)))
+  allocate(ip2(d(2)),im2(d(2)))
+  allocate(p(d(1),d(2)))
   allocate(E(N_measurements)[*],M(N_measurements)[*])
   allocate(T(Nt),beta(Nt))
-  
-  
-  ! Periodic Boundary conditions
-  ip = [(i+1, i = 1, L)] ; ip(L) = 1
-  im = [(i-1, i = 1, L)] ; im(1) = L
-    
+
+  !periodic boundary conditions 
+  ip1 = [(i+1,i=1,d(1))]; ip1(d(1)) = 1
+  ip2 = [(i+1,i=1,d(2))]; ip2(d(2)) = 1
+
+  im1 = [(i-1,i=1,d(1))]; im1(1) = d(1)
+  im2 = [(i-1,i=1,d(2))]; im2(1) = d(2)
+
+  if(mod(this_image(),d(1)) == 0) then
+     row = d(1)
+  else
+     row = mod(this_image(),d(1))
+  end if
+
+  if(mod(this_image(),d(1)*d(2)) /= 0)then
+     col = (mod(this_image(),d(1)*d(2)) - row)/d(1)+1
+  else
+     col = (d(1)*d(2) - row)/d(1)+1
+  end if
+
+  !print*,this_image(), row, col
+
+  do i = 1, d(1)
+     do j = 1, d(2)
+        p(i,j) = 2*(j-1) + i
+     end do
+  end do
+
+  left  = p(im1(row),col)
+  right = p(ip1(row),col)
+  down  = p(row,im2(col))
+  up    = p(row,ip2(col))
+
+
   ! Temperature array
   T = [(Tmin + DT*i/(Nt - 1), i = 0, Nt-1)]
   beta = 1/T
 
   ! Open file 
-  if(this_image() == 1) open(newunit = ounit, file = "datosP.dat")
+  if(this_image() == 1) open(newunit = ounit, file = "data/datosP.dat")
 
   ! Parallel
-  indices = tile_indices(L)
-  is = indices(1)
-  ie = indices(2)
+  tile_sizex = L(1)/d(1)
+  tile_sizey = L(2)/d(2)
 
-  in = neighbors()
-  left = in(1)
-  right = in(2)
-  tile_size = L/num_images()
-  ils = 1
-  ile = tile_size
-  ims = ils - 1
-  ime = ile + 1
-
-  allocate(spin(ims:ime,L)[*])
+  allocate(spin(0:tile_sizex+1,0:tile_sizey+1)[*])
   ! Number of white squares
-  Nw = ile*L/2
+  Nw = tile_sizex * tile_sizey / 2
   allocate(white(Nw,2),black(Nw,2))
   
   ! Black and white coordinates
   k = 0; k2 = 0
-  do i = 1, ile
-     do j = 1, L
+  do i = 1, tile_sizex
+     do j = 1, tile_sizey
         if( mod(i+j,2) == 0) then
            k = k + 1
            white(k,:) = [i,j]
@@ -79,11 +99,12 @@ program main
         end if
      end do
   end do
-  !if (this_image() == 1) print*, Nw, k, k2
   
   ! Cold Start
   spin = 1
   sync all
+  
+  !if (this_image() == 4) print*, "Cold start ok", up, down ,left, right
   
   ! Simulation loop
   temperature : do it = 1, Nt
@@ -91,7 +112,8 @@ program main
      do isweeps = 1, N_thermalization
         call checkerboard_sweeps(spin,beta(it))
      end do
-
+     !if (this_image() == 1) print*, "Thermalization ok"
+  
      ! Measurements loop
      do isweeps = 1, N_measurements
         do iskip = 1, Nskip
@@ -100,21 +122,23 @@ program main
         
         ! Take measurements
         E(isweeps) = energy_density(spin(:,:))
-        M(isweeps) = real(sum(spin(1:tile_size,1:L)),dp)
+        M(isweeps) = real(sum(spin(1:tile_sizex,1:tile_sizey)),dp)
         sync all
         call co_sum(E(isweeps),result_image = 1)
         call co_sum(M(isweeps),result_image = 1)
      end do
+     !if (this_image() == 1) print*, it," temperature ok"
+     
      
      ! Print measurements
      if(this_image() == 1) then
-        M = abs(M/L**2)
         
+        M = abs(M/(L(1)*L(2)))
+        !print*, T(it), avr(E)!, stderr(E), avr(M), stderr(M)
         write(ounit,*) T(it), avr(E), stderr(E), avr(M), stderr(M)
         flush(ounit)
      end if
-     E = 0
-     M = 0 
+
      
      sync all
      
@@ -146,7 +170,7 @@ contains
   end function stderr
   
   subroutine checkerboard_sweeps(spin,beta)
-    integer, intent(inout) :: spin(0:,:)[*]
+    integer, intent(inout) :: spin(0:,0:)[*]
     real(dp), intent(in) ::  beta
     integer :: i
 
@@ -154,23 +178,31 @@ contains
     do i = 1, Nw
        call metropolis(spin,[white(i,1),white(i,2)],beta)
     end do
-    spin(ime,:)[left]  = spin(ils,:)
-    spin(ims,:)[right] = spin(ile,:)
+    !if (this_image() == 1) print*, "White squares updated"
+  
+    spin(tile_sizex+1,:)[left]  = spin(1,:)
+    spin(0,:)[right] = spin(tile_sizex,:)
+    spin(:,tile_sizey+1)[up]  = spin(:,1)
+    spin(:,0)[down] = spin(:,tile_sizey)
+
     sync all
     
     ! Update black squares
     do i = 1, Nw
        call metropolis(spin,[black(i,1),black(i,2)],beta)
     end do
-    spin(ime,:)[left]  = spin(ils,:)
-    spin(ims,:)[right] = spin(ile,:)
+    spin(tile_sizex+1,:)[left]  = spin(1,:)
+    spin(0,:)[right] = spin(tile_sizex,:)
+    spin(:,tile_sizey+1)[up]  = spin(:,1)
+    spin(:,0)[down] = spin(:,tile_sizey)
+
     sync all
     
   end subroutine checkerboard_sweeps
   
 
   subroutine metropolis(spin,x,beta)
-    integer, intent(inout) :: spin(0:,:)
+    integer, intent(inout) :: spin(0:,0:)
     real(dp), intent(in) :: beta
     integer, intent(in) :: x(2)
     integer :: DH
@@ -188,29 +220,29 @@ contains
   end subroutine metropolis
 
   pure function DE(spin,x)
-    integer, intent(in) :: spin(0:,:)
+    integer, intent(in) :: spin(0:,0:)
     integer, intent(in) :: x(2)
     integer :: DE, i,j
 
     i = x(1)
     j = x(2)
 
-    DE = 2*spin(i,j)*(spin(i+1,j) + spin(i,ip(j)) + spin(i-1,j) + spin(i,im(j)))
+    DE = 2*spin(i,j)*(spin(i+1,j) + spin(i,j+1) + spin(i-1,j) + spin(i,j-1))
     
   end function DE
 
   pure function energy_density(spin)
-    integer, intent(in) :: spin(0:,:)
+    integer, intent(in) :: spin(0:,0:)
     real(dp) :: energy_density
     integer :: E, i, j
 
     E = 0
-    do i = 1, ile
-       do j = 1, L
-          E = E + spin(i,j) * (spin(i+1,j) + spin(i,ip(j)))
+    do i = 1, tile_sizex
+       do j = 1, tile_sizey
+          E = E + spin(i,j) * (spin(i+1,j) + spin(i,j+1))
        end do
     end do
-    energy_density = -real(E,dp)/L**2
+    energy_density = -real(E,dp)/(L(1)*L(2))
         
   end function energy_density
   

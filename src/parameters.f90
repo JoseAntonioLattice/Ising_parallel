@@ -4,8 +4,10 @@ module parameters
 
   ! Parameters
 
+  integer :: d(2)[*]
+  
   !Lattice
-  integer :: L[*]
+  integer :: L(2)[*]
 
   !Simulation
   integer :: N_measurements[*]
@@ -16,7 +18,7 @@ module parameters
   integer :: Nt[*]
   real(dp):: Tmin[*], Tmax[*], DT[*]
 
-  namelist/params/ L, N_measurements, N_thermalization, Nskip, Nt, Tmin, Tmax
+  namelist/params/ d, L, N_measurements, N_thermalization, Nskip, Nt, Tmin, Tmax
 
 contains
   
@@ -37,6 +39,7 @@ contains
        DT = Tmax - Tmin
     end if
 
+    call co_broadcast(d,source_image = 1)
     call co_broadcast(L,source_image = 1)
     call co_broadcast(N_measurements,source_image = 1)
     call co_broadcast(N_thermalization,source_image = 1)
