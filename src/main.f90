@@ -1,6 +1,6 @@
 program main
 
-  use iso_fortran_env, only: dp => real64
+  use iso_fortran_env, only: dp => real64, mp => int32
   use parameters
   use mod_parallel
   implicit none
@@ -19,7 +19,7 @@ program main
   !Parallel variables
 
   ! Coarrays
-  integer, allocatable :: spin(:,:)[:]
+  integer(mp), allocatable :: spin(:,:)[:]
   real(dp), allocatable, codimension[:] :: E(:), M(:)
   
   integer :: is, ie, indices(2), tile_sizex, tile_sizey
@@ -170,7 +170,7 @@ contains
   end function stderr
   
   subroutine checkerboard_sweeps(spin,beta)
-    integer, intent(inout) :: spin(0:,0:)[*]
+    integer(mp), intent(inout) :: spin(0:,0:)[*]
     real(dp), intent(in) ::  beta
     integer :: i
 
@@ -202,7 +202,7 @@ contains
   
 
   subroutine metropolis(spin,x,beta)
-    integer, intent(inout) :: spin(0:,0:)
+    integer(mp), intent(inout) :: spin(0:,0:)
     real(dp), intent(in) :: beta
     integer, intent(in) :: x(2)
     integer :: DH
@@ -220,7 +220,7 @@ contains
   end subroutine metropolis
 
   pure function DE(spin,x)
-    integer, intent(in) :: spin(0:,0:)
+    integer(mp), intent(in) :: spin(0:,0:)
     integer, intent(in) :: x(2)
     integer :: DE, i,j
 
@@ -232,7 +232,7 @@ contains
   end function DE
 
   pure function energy_density(spin)
-    integer, intent(in) :: spin(0:,0:)
+    integer(mp), intent(in) :: spin(0:,0:)
     real(dp) :: energy_density
     integer :: E, i, j
 
