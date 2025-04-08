@@ -1,6 +1,6 @@
 program main
 
-  use iso_fortran_env, only: dp => real64, mp => int32
+  use iso_fortran_env, only: dp => real64, mp => int32, i64 => int64
   use parameters
   use mod_parallel
   implicit none
@@ -24,8 +24,9 @@ program main
   
   integer :: is, ie, indices(2), tile_sizex, tile_sizey
   integer :: ils, ile, ims, ime, in(2), left, right, up, down, col, row
+  integer :: timeunit
+  integer(i64) :: clock_start, clock_end, clock_rate
   
-
   call read_input()
 
   call random_init(.false.,.true.)
@@ -37,45 +38,61 @@ program main
   allocate(E(N_measurements)[*],M(N_measurements)[*])
   allocate(T(Nt),beta(Nt))
 
-  !periodic boundary conditions 
-  ip1 = [(i+1,i=1,d(1))]; ip1(d(1)) = 1
-  ip2 = [(i+1,i=1,d(2))]; ip2(d(2)) = 1
-
-  im1 = [(i-1,i=1,d(1))]; im1(1) = d(1)
-  im2 = [(i-1,i=1,d(2))]; im2(1) = d(2)
-
-  if(mod(this_image(),d(1)) == 0) then
-     row = d(1)
-  else
-     row = mod(this_image(),d(1))
-  end if
-
-  if(mod(this_image(),d(1)*d(2)) /= 0)then
-     col = (mod(this_image(),d(1)*d(2)) - row)/d(1)+1
-  else
-     col = (d(1)*d(2) - row)/d(1)+1
-  end if
-
-  !print*,this_image(), row, col
 
   do i = 1, d(1)
      do j = 1, d(2)
         p(i,j) = 2*(j-1) + i
      end do
   end do
+  
+  if(this_image()==1) print*, 'p ok'
+  
+  if (d(1) == 1)then
+     row = 1
+     ip1(1) = 1
+     im1(1) = 1
+
+  else
+     !periodic boundary conditions 
+     ip1 = [(i+1,i=1,d(1))]; ip1(d(1)) = 1
+     im1 = [(i-1,i=1,d(1))]; im1(1) = d(1)
+     
+     if(mod(this_image(),d(1)) == 0) then
+        row = d(1)
+     else
+        row = mod(this_image(),d(1))
+     end if
+  end if
+
+  
+  if (d(2) == 1)then
+     col = 1
+     ip2(1) = 1
+     im2(1) = 1
+  else
+     ip2 = [(i+1,i=1,d(2))]; ip2(d(2)) = 1
+     im2 = [(i-1,i=1,d(2))]; im2(1) = d(2)
+
+      
+     if(mod(this_image(),d(1)*d(2)) /= 0)then
+        col = (mod(this_image(),d(1)*d(2)) - row)/d(1)+1
+     else
+        col = (d(1)*d(2) - row)/d(1)+1
+     end if
+  end if
 
   left  = p(im1(row),col)
   right = p(ip1(row),col)
   down  = p(row,im2(col))
   up    = p(row,ip2(col))
 
-
+  print*, this_image(), left, right, down, up
   ! Temperature array
   T = [(Tmin + DT*i/(Nt - 1), i = 0, Nt-1)]
   beta = 1/T
 
   ! Open file 
-  if(this_image() == 1) open(newunit = ounit, file = "data/datosP.dat")
+  if(this_image() == 1) open(newunit = ounit, file = "data/datos_ncores="//int2str(num_images()) //".dat")
 
   ! Parallel
   tile_sizex = L(1)/d(1)
@@ -104,9 +121,15 @@ program main
   spin = 1
   sync all
   
-  !if (this_image() == 4) print*, "Cold start ok", up, down ,left, right
+  if (this_image() == 1) print*, "Cold start ok", up, down ,left, right
   
   ! Simulation loop
+  if (this_image() == 1)then
+     open(newunit = timeunit, file = "data/time_ncores="//int2str(num_images())//".dat", access ='append', status='unknown')
+     call system_clock(clock_start)  
+  end if
+
+  if (this_image() == 1) print*, 'Before simulation ok'
   temperature : do it = 1, Nt
      ! Thermalization
      do isweeps = 1, N_thermalization
@@ -137,12 +160,18 @@ program main
         !print*, T(it), avr(E)!, stderr(E), avr(M), stderr(M)
         write(ounit,*) T(it), avr(E), stderr(E), avr(M), stderr(M)
         flush(ounit)
+        
      end if
 
      
      sync all
      
   end do temperature
+  if (this_image() == 1)then
+     call system_clock(clock_end,clock_rate)
+     print*, "Elapsed time ", real(clock_end-clock_start)/clock_rate, ' secs'
+     write(timeunit,*) real(clock_end-clock_start)/clock_rate
+  end if
 contains
 
   function avr(x)
@@ -245,5 +274,13 @@ contains
     energy_density = -real(E,dp)/(L(1)*L(2))
         
   end function energy_density
+
+  function int2str(i)
+    character(:), allocatable :: int2str
+    integer, intent(in) :: i
+    character(20) :: k
+    write(k,*) i
+    int2str = trim(adjustl(k))
+  end function int2str
   
 end program main

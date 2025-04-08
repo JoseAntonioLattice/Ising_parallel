@@ -18,7 +18,7 @@ module parameters
   integer :: Nt[*]
   real(dp):: Tmin[*], Tmax[*], DT[*]
 
-  namelist/params/ d, L, N_measurements, N_thermalization, Nskip, Nt, Tmin, Tmax
+  namelist/params/ L, N_measurements, N_thermalization, Nskip, Nt, Tmin, Tmax
 
 contains
   
@@ -31,7 +31,11 @@ contains
        write(*,'(a)',advance = 'no') 'Type the parameters file: '
        read(*,'(a)') filename
        write(*,'(a)') trim(filename)
-    
+
+       write(*,'(a)',advance = 'no') 'Type the cores array: '
+       read(*,'(2i2)') d
+       write(*,'(2i2)') d
+       
        open(newunit = parameters_unit, file = trim(filename))
        read(parameters_unit, nml = params)
        close(parameters_unit)
