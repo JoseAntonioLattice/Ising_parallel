@@ -41,45 +41,31 @@ program main
 
   do i = 1, d(1)
      do j = 1, d(2)
-        p(i,j) = 2*(j-1) + i
+        p(i,j) = d(1)*(j-1) + i
      end do
   end do
   
-  if(this_image()==1) print*, 'p ok'
+  !if(this_image()==1) print*, 'p ok'
   
-  if (d(1) == 1)then
-     row = 1
-     ip1(1) = 1
-     im1(1) = 1
-
+  !periodic boundary conditions 
+  ip1 = [(i+1,i=1,d(1))]; ip1(d(1)) = 1
+  im1 = [(i-1,i=1,d(1))]; im1(1) = d(1)
+  
+  if(mod(this_image(),d(1)) == 0) then
+     row = d(1)
   else
-     !periodic boundary conditions 
-     ip1 = [(i+1,i=1,d(1))]; ip1(d(1)) = 1
-     im1 = [(i-1,i=1,d(1))]; im1(1) = d(1)
-     
-     if(mod(this_image(),d(1)) == 0) then
-        row = d(1)
-     else
-        row = mod(this_image(),d(1))
-     end if
+     row = mod(this_image(),d(1))
   end if
-
   
-  if (d(2) == 1)then
-     col = 1
-     ip2(1) = 1
-     im2(1) = 1
-  else
-     ip2 = [(i+1,i=1,d(2))]; ip2(d(2)) = 1
-     im2 = [(i-1,i=1,d(2))]; im2(1) = d(2)
-
+  ip2 = [(i+1,i=1,d(2))]; ip2(d(2)) = 1
+  im2 = [(i-1,i=1,d(2))]; im2(1) = d(2)
       
-     if(mod(this_image(),d(1)*d(2)) /= 0)then
-        col = (mod(this_image(),d(1)*d(2)) - row)/d(1)+1
-     else
-        col = (d(1)*d(2) - row)/d(1)+1
-     end if
+  if(mod(this_image(),d(1)*d(2)) /= 0)then
+     col = (mod(this_image(),d(1)*d(2)) - row)/d(1)+1
+  else
+     col = (d(1)*d(2) - row)/d(1)+1
   end if
+  
 
   left  = p(im1(row),col)
   right = p(ip1(row),col)
@@ -207,7 +193,6 @@ contains
     do i = 1, Nw
        call metropolis(spin,[white(i,1),white(i,2)],beta)
     end do
-    !if (this_image() == 1) print*, "White squares updated"
   
     spin(tile_sizex+1,:)[left]  = spin(1,:)
     spin(0,:)[right] = spin(tile_sizex,:)

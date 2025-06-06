@@ -1,9 +1,9 @@
 &params
-L = 120,120
+L = 108,108
 N_measurements = 1000
 N_thermalization = 500
-Nt = 10
-Nskip = 10
+Nt = 100
+Nskip = 5
 Tmin = 0.1
-Tmax = 4.0
+Tmax = 10.0
 /
