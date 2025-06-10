@@ -119,14 +119,16 @@ program main
   temperature : do it = 1, Nt
      ! Thermalization
      do isweeps = 1, N_thermalization
-        call checkerboard_sweeps(spin,beta(it))
+        !call checkerboard_sweeps(spin,beta(it))
+        call update_sublattice(spin,beta(it))
      end do
      !if (this_image() == 1) print*, "Thermalization ok"
   
      ! Measurements loop
      do isweeps = 1, N_measurements
         do iskip = 1, Nskip
-           call checkerboard_sweeps(spin,beta(it))
+           !call checkerboard_sweeps(spin,beta(it))
+           call update_sublattice(spin,beta(it))
         end do
         
         ! Take measurements
@@ -213,6 +215,35 @@ contains
     sync all
     
   end subroutine checkerboard_sweeps
+
+  subroutine update_sublattice(spin,beta)
+    integer(mp), intent(inout) :: spin(0:,0:)[*]
+    real(dp), intent(in) ::  beta
+    integer :: i, j
+
+    !Updating the interior
+    do i = 1, tile_sizex - 1
+       do j = 1, tile_sizey - 1
+          call metropolis(spin,[i,j],beta)
+       end do
+    end do
+    spin(tile_sizex+1,1:tile_sizey-1)[left] = spin(1,1:tile_sizey-1)
+    spin(1:tile_sizex-1,tile_sizey+1)[down] = spin(1:tile_sizex-1,1)
+
+    sync all
+
+    do i = 1, tile_sizex
+       call metropolis(spin,[i,tile_sizey],beta)
+    end do
+    spin(:,0)[up] = spin(:,tile_sizey)
+    sync all
+
+    do j = 1, tile_sizey - 1
+       call metropolis(spin,[tile_sizex,j],beta)
+    end do
+    spin(0,1:tile_sizey-1)[right] = spin(tile_sizex,1:tile_sizey-1)
+    sync all
+  end subroutine update_sublattice
   
 
   subroutine metropolis(spin,x,beta)
